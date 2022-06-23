@@ -10,11 +10,13 @@ $conn = new mysqli($servername, $username, $password, $dbname);
 if ($conn->connect_error) {
   die("Connection failed: " . $conn->connect_error);
 }else{
+    $sql = "delete from log where id>1";
+    mysqli_query($conn, $sql);
     main($conn);
 }
 
 function main($conn){
-    $array = explode("\n", file_get_contents('entradaLog'));
+    $array = explode("\n", file_get_contents('teste02.txt'));
     $array = load_initial_values($array, $conn);
     $result = verify_log($array, $conn);
 }   
@@ -22,11 +24,9 @@ function main($conn){
 function load_initial_values($array, $conn){
     foreach($array as $line => $lineContent){
         if($lineContent == ""){
-            unset($array[$line]);
             return $array;
         }else{
             save_value($lineContent, $conn);
-            unset($array[$line]);
         }
     }
     return $array;
@@ -35,11 +35,16 @@ function load_initial_values($array, $conn){
 function verify_log($array, $conn){
     $transaction_started = [];
     $transaction_commited = [];
-    $transaction_ended = [];
     $operations = [];
+    $checkpoint_transactions = null;    
+
+    $array = array_reverse($array);
+    
+    $ckptEndFounded = null;    
+    $ckptStartFounded = null;
 
     foreach($array as $index => $line){
-
+      
         $order = array("<", ">");
         $replace = '';
         $line = str_replace($order, $replace, $line);
@@ -50,67 +55,101 @@ function verify_log($array, $conn){
                 $transaction_started[] = $elements[1]; 
                 break;
             case 'Start':
-                $transaction_started_CKPT[] = $elements[1]; 
+                if($ckptEndFounded){
+                    $order = array("Start CKPT(", ")");
+                    $replace = '';
+                    $line = str_replace($order, $replace, $line);
+                    $elements = explode(",", $line);
+    
+                    $checkpoint_transactions = $elements;
+                    $ckptStartFounded = $index;
+
+                    make_redo(array_reverse($array),$checkpoint_transactions, $transaction_started, $transaction_commited, $conn);
+                    exit;
+                }
                 break;
             case 'commit':
                 $transaction_commited[] = $elements[1]; 
                 break;
-
             case 'End':
-                foreach($transaction_started_CKPT as $checkpoint){
-                    $order2 = array("CKPT(", ")");
-                    $replace2 = '';
-                    $elements_checkpoint = str_replace($order2, $replace2, $checkpoint);
-                    $elements_checkpoint = explode(',', $elements_checkpoint);
-                    
-                    foreach($elements_checkpoint as $ckpt_finished){
-
-                        foreach($operations as $line => $op){
-                            $elements_op = explode(",", $op);
-
-                            if($elements_op[0] == $ckpt_finished){
-                                unset($operations[$line]);
-                            }
-                        }
-
-                        foreach($transaction_commited as $key => $value){
-                            if($value == $ckpt_finished){
-                                unset($transaction_commited[$key]);
-                            }
-                        }
-                    } 
-                }
-
+                $ckptEndFounded = $index;
                 break;
+            case 'crash':
+                break;
+            case NULL || '':
+                make_redo(array_reverse($array),$checkpoint_transactions, $transaction_started, $transaction_commited, $conn);
+                exit;
             default:
-                $operations[] = $elements[0]; 
+                $operations[] = $elements[0];
                 break;    
         }   
     }
-    
+}
 
-    echo '<br>Realizou Redo: ';
-    foreach($transaction_commited as $commit){
-        echo '('.$commit.')';
+function make_redo($array, $checkpoint_transactions, $transaction_started, $transaction_commited, $conn){
 
-        foreach($operations as $op){
-            $elements_op = explode(",", $op);
-            if($elements_op[0] == $commit){
-                save_value($elements_op[2].','.$elements_op[1].'='.$elements_op[3], $conn);
+    //transação foi comitada (caso não houver checkpoint)
+    foreach($transaction_started as $ckpt){
+        if(in_array($ckpt, $transaction_commited)){
+            echo 'Fez redo:';
+            var_dump($ckpt);
+        }else{
+            echo 'Não fez redo:';
+            var_dump($ckpt);
+        }
+    }
+    //transação foi comitada (caso houver checkpoint)
+    if($checkpoint_transactions){
+        foreach($checkpoint_transactions as $ckpt){
+            if(in_array($ckpt, $transaction_commited)){
+                echo 'Fez redo:';
+                var_dump($ckpt);
+            }else{
+                echo 'Não fez redo:';
+                var_dump($ckpt);
             }
         }
+    }
+    //percorre o array fazendo o redo
+    foreach($array as $index => $line){
+      
+        $order = array("<", ">");
+        $replace = '';
+        $line = str_replace($order, $replace, $line);
+        $elements = explode(" ", $line);
 
-
-
+        switch($elements[0]){
+            case 'start': 
+                break;
+            case 'Start':
+                break;
+            case 'commit':
+                break;
+            case 'End':
+                break;
+            case 'crash':
+                break;
+            case NULL || '':
+                break;
+            default:
+                $operation = explode(",", $elements[0]);
+                if(count($operation) == 4){
+                    if(in_array($operation[0], $checkpoint_transactions) OR in_array($operation[0], $transaction_started)){
+                        if(in_array($operation[0], $transaction_commited)){
+                            save_value($operation[2].','.$operation[1].'='.$operation[3], $conn);
+                        }
+                    }
+                }
+                break;    
+        }   
     }
 
     $sql = "SELECT * FROM log where 1";
     $result = $conn->query($sql);
     
     while($item = mysqli_fetch_array($result)){
-        echo('<br>'.$item[0].': (A:'.$item[1].' B:'.$item[2].')');
+        var_dump($item[0].': (A:'.$item[1].' B:'.$item[2].')');
     }
-
 }
 
 function save_value($lineContent, $conn){
@@ -124,20 +163,10 @@ function save_value($lineContent, $conn){
 
     if($item == null ? 0 : 1){
         $sql = "UPDATE log set ".$element[0]."=".$values[1]." where id = ".$element[1];
-    
-        if (mysqli_query($conn, $sql)) {
-        // echo "<br>Data changed successfully";
-        } else {
-        echo "Error: " . $sql . "<br>" . mysqli_error($conn);
-        }
-
+        mysqli_query($conn, $sql);
     }else{
         $sql = "INSERT INTO log (id, A, B) VALUES (".$element[1].", ".($element[0] == 'A' ? $values[1] : 'null').", ".($element[0] == 'B' ? $values[1] : 'null').")";
-        if (mysqli_query($conn, $sql)) {
-        echo "<br>New record created successfully";
-        } else {
-        echo "Error: " . $sql . "<br>" . mysqli_error($conn);
-        }
+        mysqli_query($conn, $sql);
     }
 
     return;
