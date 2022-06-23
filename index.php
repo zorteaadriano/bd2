@@ -4,6 +4,8 @@ $username = "adriano";
 $password = "1a2b3c4d";
 $dbname = 'bd2';
 
+$log_file = $argv[1];
+
 // Create connection
 $conn = new mysqli($servername, $username, $password, $dbname);
 // Check connection
@@ -12,11 +14,11 @@ if ($conn->connect_error) {
 }else{
     $sql = "delete from log where id>1";
     mysqli_query($conn, $sql);
-    main($conn);
+    main($conn, $log_file);
 }
 
-function main($conn){
-    $array = explode("\n", file_get_contents('teste02.txt'));
+function main($conn, $log_file){
+    $array = explode("\n", file_get_contents($log_file));
     $array = load_initial_values($array, $conn);
     $result = verify_log($array, $conn);
 }   
